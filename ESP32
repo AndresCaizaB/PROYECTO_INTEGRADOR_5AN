@@ -1,0 +1,148 @@
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <ESP32Servo.h>
+
+const char* ssid = "AndyJhonson0_o";
+const char* password = "ISABELLA53andy";
+
+// Pines de servos
+#define BASE_PIN    13
+#define HOMBRO_PIN  12
+#define CODO_PIN    14
+#define PINZA_PIN   27
+
+// Instancias de servos
+Servo servoBase, servoHombro, servoCodo, servoPinza;
+
+// WebSocket
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+
+// Posiciones iniciales (no se aplican hasta que se reciba una orden)
+int baseVal = 90, hombroVal = 90, codoVal = 90, pinzaVal = 90;
+
+// Variables para control incremental
+int lastJoyX = 0, lastJoyY = 0;
+
+void moverServos() {
+  servoBase.write(baseVal);
+  servoHombro.write(hombroVal);
+  servoCodo.write(codoVal);
+  servoPinza.write(pinzaVal);
+}
+
+void limitarRangos() {
+  baseVal = constrain(baseVal, 0, 180);
+  hombroVal = constrain(hombroVal, 0, 180);
+  codoVal = constrain(codoVal, 0, 180);
+  pinzaVal = constrain(pinzaVal, 0, 180);
+}
+
+void onWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
+                      AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  if (type == WS_EVT_DATA) {
+    String msg = "";
+    for (size_t i = 0; i < len; i++) msg += (char)data[i];
+
+    // 📤 Datos de sliders
+    if (msg.startsWith("S,")) {
+      int vals[6], idx = 0;
+      char *token = strtok((char*)msg.c_str() + 2, ",");
+      while (token && idx < 6) {
+        vals[idx++] = atoi(token);
+        token = strtok(NULL, ",");
+      }
+      if (idx >= 4) {
+        baseVal = vals[0];
+        hombroVal = vals[1];
+        codoVal = vals[2];
+        pinzaVal = vals[3];
+        limitarRangos();
+        moverServos();
+      }
+    }
+
+    // 🎮 Datos de joystick
+    else if (msg.startsWith("J,")) {
+      int vals[2], idx = 0;
+      char *token = strtok((char*)msg.c_str() + 2, ",");
+      while (token && idx < 2) {
+        vals[idx++] = atoi(token);
+        token = strtok(NULL, ",");
+      }
+      if (idx == 2) {
+        int joyX = vals[0]; // -100 a 100
+        int joyY = vals[1];
+
+        int threshold = 10;
+        int step = 2;
+
+        if (abs(joyX) > threshold) baseVal += (joyX > 0) ? step : -step;
+        if (abs(joyY) > threshold) hombroVal += (joyY > 0) ? step : -step;
+
+        limitarRangos();
+        moverServos();
+      }
+    }
+
+    // 🟢 Botones A, B, C, D
+    else if (msg.startsWith("B,")) {
+      char btn = msg.charAt(2);
+      if (btn == 'A') {
+        pinzaVal = 180; // Abrir pinza
+      } else if (btn == 'B') {
+        pinzaVal = 0; // Cerrar pinza
+      } else if (btn == 'C') {
+        baseVal = 90;
+        hombroVal = 90;
+        codoVal = 90;
+        pinzaVal = 90;
+      } else if (btn == 'D') {
+        baseVal = 0;
+        hombroVal = 180;
+        codoVal = 90;
+        pinzaVal = 0;
+      }
+      limitarRangos();
+      moverServos();
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Conexión WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Conectando a WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi conectado!");
+  Serial.print("Dirección IP: ");
+  Serial.println(WiFi.localIP());
+
+  // Configurar servos (sin moverlos)
+  servoBase.setPeriodHertz(50);
+  servoHombro.setPeriodHertz(50);
+  servoCodo.setPeriodHertz(50);
+  servoPinza.setPeriodHertz(50);
+
+  servoBase.attach(BASE_PIN, 500, 2500);
+  servoHombro.attach(HOMBRO_PIN, 500, 2500);
+  servoCodo.attach(CODO_PIN, 500, 2500);
+  servoPinza.attach(PINZA_PIN, 500, 2500);
+
+  // No se llama a moverServos() aquí para evitar movimientos no deseados
+
+  // Iniciar servidor WebSocket
+  ws.onEvent(onWebSocketEvent);
+  server.addHandler(&ws);
+  server.begin();
+  Serial.println("Servidor WebSocket iniciado");
+}
+
+void loop() {
+  // Nada que hacer aquí, todo es manejado por WebSocket
+}
